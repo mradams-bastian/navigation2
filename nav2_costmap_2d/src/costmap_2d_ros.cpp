@@ -58,14 +58,28 @@ using rcl_interfaces::msg::ParameterType;
 
 namespace nav2_costmap_2d
 {
-Costmap2DROS::Costmap2DROS(const std::string & name)
-: Costmap2DROS(name, "/", name) {}
+Costmap2DROS::Costmap2DROS(const std::string & name, const bool & use_sim_time)
+: Costmap2DROS(name, "/", name, use_sim_time) {}
+
+Costmap2DROS::Costmap2DROS()
+: nav2_util::LifecycleNode("costmap", ""),
+  name_("costmap"),
+  default_plugins_{"static_layer", "obstacle_layer", "inflation_layer"},
+  default_types_{
+    "nav2_costmap_2d::StaticLayer",
+    "nav2_costmap_2d::ObstacleLayer",
+    "nav2_costmap_2d::InflationLayer"}
+{
+  declare_parameter("map_topic", rclcpp::ParameterValue(std::string("map")));
+  init();
+}
 
 Costmap2DROS::Costmap2DROS(
   const std::string & name,
   const std::string & parent_namespace,
-  const std::string & local_namespace)
-: nav2_util::LifecycleNode(name, "", false,
+  const std::string & local_namespace,
+  const bool & use_sim_time)
+: nav2_util::LifecycleNode(name, "",
     // NodeOption arguments take precedence over the ones provided on the command line
     // use this to make sure the node is placed on the provided namespace
     // TODO(orduno) Pass a sub-node instead of creating a new node for better handling
@@ -73,7 +87,8 @@ Costmap2DROS::Costmap2DROS(
     rclcpp::NodeOptions().arguments({
     "--ros-args", "-r", std::string("__ns:=") +
     nav2_util::add_namespaces(parent_namespace, local_namespace),
-    "--ros-args", "-r", name + ":" + std::string("__node:=") + name
+    "--ros-args", "-r", name + ":" + std::string("__node:=") + name,
+    "--ros-args", "-p", "use_sim_time:=" + std::string(use_sim_time ? "true" : "false"),
   })),
   name_(name),
   parent_namespace_(parent_namespace),
@@ -82,6 +97,14 @@ Costmap2DROS::Costmap2DROS(
     "nav2_costmap_2d::StaticLayer",
     "nav2_costmap_2d::ObstacleLayer",
     "nav2_costmap_2d::InflationLayer"}
+{
+  declare_parameter(
+    "map_topic", rclcpp::ParameterValue(
+      (parent_namespace_ == "/" ? "/" : parent_namespace_ + "/") + std::string("map")));
+  init();
+}
+
+void Costmap2DROS::init()
 {
   RCLCPP_INFO(get_logger(), "Creating Costmap");
 
@@ -94,9 +117,6 @@ Costmap2DROS::Costmap2DROS(
   declare_parameter("height", rclcpp::ParameterValue(5));
   declare_parameter("width", rclcpp::ParameterValue(5));
   declare_parameter("lethal_cost_threshold", rclcpp::ParameterValue(100));
-  declare_parameter(
-    "map_topic", rclcpp::ParameterValue(
-      (parent_namespace_ == "/" ? "/" : parent_namespace_ + "/") + std::string("map")));
   declare_parameter("observation_sources", rclcpp::ParameterValue(std::string("")));
   declare_parameter("origin_x", rclcpp::ParameterValue(0.0));
   declare_parameter("origin_y", rclcpp::ParameterValue(0.0));
@@ -637,11 +657,27 @@ Costmap2DROS::dynamicParametersCallback(std::vector<rclcpp::Parameter> parameter
       }
     } else if (type == ParameterType::PARAMETER_INTEGER) {
       if (name == "width") {
-        resize_map = true;
-        map_width_meters_ = parameter.as_int();
+        if (parameter.as_int() > 0) {
+          resize_map = true;
+          map_width_meters_ = parameter.as_int();
+        } else {
+          RCLCPP_ERROR(
+            get_logger(), "You try to set width of map to be negative or zero,"
+            " this isn't allowed, please give a positive value.");
+          result.successful = false;
+          return result;
+        }
       } else if (name == "height") {
-        resize_map = true;
-        map_height_meters_ = parameter.as_int();
+        if (parameter.as_int() > 0) {
+          resize_map = true;
+          map_height_meters_ = parameter.as_int();
+        } else {
+          RCLCPP_ERROR(
+            get_logger(), "You try to set height of map to be negative or zero,"
+            " this isn't allowed, please give a positive value.");
+          result.successful = false;
+          return result;
+        }
       }
     } else if (type == ParameterType::PARAMETER_STRING) {
       if (name == "footprint") {
